@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package example.bank;
+
+// Address exercises scalars and a proto3 `optional` scalar.
+message Address {
+  string street = 1;
+  string city = 2;
+  optional string zip = 3;
+}
+
+enum AccountType {
+  ACCOUNT_TYPE_UNSPECIFIED = 0;
+  CHECKING = 1;
+  SAVINGS = 2;
+}
+
+// Account exercises every supported field shape:
+// scalar, enum, singular message, repeated, maps (scalar & message values),
+// a oneof, an optional scalar, and a repeated enum.
+message Account {
+  string id = 1;
+  AccountType type = 2;
+  int64 balance_cents = 3;
+  Address address = 4;                  // singular message -> std::optional
+  repeated string tags = 5;             // -> std::vector
+  map<string, int32> counters = 6;      // -> std::map (scalar value)
+  map<string, Address> related = 7;     // -> std::map (message value)
+  oneof contact {                       // -> std::variant
+    string email = 8;
+    string phone = 9;
+    Address fallback = 10;
+  }
+  optional double interest_rate = 11;   // proto3 optional -> std::optional
+  repeated AccountType allowed_types = 12;
+}
