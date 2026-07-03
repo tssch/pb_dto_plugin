@@ -14,14 +14,15 @@ gen: build
 	protoc \
 		--plugin=protoc-gen-cppdto=$(BIN) \
 		--cppdto_out=$(GEN) \
+		--cppdto_opt=gen_formatters=true \
 		--cpp_out=$(GEN) \
 		--proto_path=example \
 		bank.proto
 
 # Compile and run the C++ round-trip test. Requires protobuf C++ dev libraries.
 test: gen
-	g++ -std=c++17 -I$(GEN) $$(pkg-config --cflags protobuf) \
-		example/roundtrip_test.cc $(GEN)/bank.conv.cc $(GEN)/bank.pb.cc \
+	g++ -std=c++17 -I$(GEN) -Iinclude $$(pkg-config --cflags protobuf) \
+		example/roundtrip_test.cc $(GEN)/bank.conv.cc $(GEN)/bank.fmt.cc $(GEN)/bank.pb.cc \
 		$$(pkg-config --libs protobuf) -lpthread -o bin/roundtrip
 	./bin/roundtrip
 

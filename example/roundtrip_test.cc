@@ -4,6 +4,7 @@
 #include <iostream>
 
 #include "bank.conv.h"
+#include "bank.fmt.h"
 
 int main() {
   namespace pb = example::bank;
@@ -60,6 +61,16 @@ int main() {
   assert(empty.balance_cents == 0);
   assert(empty.type == dto::AccountType::ACCOUNT_TYPE_UNSPECIFIED);
   assert(empty.contact.index() == 0);
+
+  // Formatter: enum names, optional, oneof-by-index, and nested types render.
+  std::string s = logfmt::to_string_one_line(d);
+  assert(s.find("type: SAVINGS") != std::string::npos);          // enum name
+  assert(s.find("contact.phone: +1-555-0100") != std::string::npos);  // oneof label
+  assert(s.find("zip: 12345") != std::string::npos);             // nested optional
+  std::string es = logfmt::to_string_one_line(empty);
+  assert(es.find("contact: (unset)") != std::string::npos);      // monostate
+  assert(es.find("address: null") != std::string::npos);         // empty optional
+  std::cout << logfmt::to_string(d) << "\n";
 
   std::cout << "round-trip test passed\n";
   return 0;

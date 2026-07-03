@@ -15,6 +15,12 @@ type Options struct {
 	NamespaceSuffix string
 	// BytesType is the C++ type used for proto `bytes` fields.
 	BytesType string
+	// GenFormatters, when set, additionally emits `*.fmt.h` / `*.fmt.cc` files
+	// implementing `logfmt::to_ostream` for the generated DTO types.
+	GenFormatters bool
+	// LogFormatInclude is the include path used to pull in the logfmt header
+	// from generated formatter files, e.g. "log_format.hpp".
+	LogFormatInclude string
 }
 
 // nsPrefix returns the C++ namespace prefix for a proto package, e.g.

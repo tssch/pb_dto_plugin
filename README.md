@@ -42,6 +42,11 @@ For `foo.proto` the plugin emits:
 - `foo.conv.h` — declarations of `from_proto` / `to_proto`.
 - `foo.conv.cc` — definitions; includes both `foo.dto.h` and `foo.pb.h`.
 
+With `--cppdto_opt=gen_formatters=true` it additionally emits:
+
+- `foo.fmt.h` / `foo.fmt.cc` — `logfmt::to_ostream` overloads for every DTO
+  message and enum, for structured (indented, recursive) logging.
+
 Conversions are free functions in the DTO namespace, found via ADL:
 
 ```cpp
@@ -85,6 +90,26 @@ Passed via `--cppdto_opt=key=value`:
 | ------------------------ | -------------- | ----------------------------------------- |
 | `dto_namespace_suffix`   | `dto`          | leaf namespace appended to the proto package |
 | `bytes_type`             | `::std::string`| C++ type used for `bytes` fields          |
+| `gen_formatters`         | `false`        | also emit `*.fmt.h/.cc` with `logfmt::to_ostream` |
+| `log_format_include`     | `log_format.hpp` | include path for the logfmt header in `*.fmt.h` |
+
+### Formatters (`gen_formatters=true`)
+
+Emits free `to_ostream(logfmt::context&, const T&)` overloads in the DTO
+namespace, found via ADL, so any DTO (including nested messages, `optional`,
+`oneof`, maps, and vectors) can be rendered:
+
+```cpp
+#include "foo.fmt.h"
+std::cout << logfmt::to_string(my_dto);           // indented, multi-line
+std::string s = logfmt::to_string_one_line(my_dto);
+```
+
+Enums render as their value name, a `oneof` as `field.name: value` (labelled by
+active alternative), and an empty `optional`/unset `oneof` as `null`/`(unset)`.
+The formatter files depend on `include/log_format.hpp` (point the compiler at it
+with `-Iinclude`, or override the include path via `log_format_include`); the
+`*.dto.h` / `*.conv.*` files remain protobuf- and logfmt-free.
 
 ## Not yet handled (intentional)
 
@@ -92,4 +117,5 @@ Passed via `--cppdto_opt=key=value`:
 - Well-known types (`Timestamp`, `Duration`, wrappers, `Any`, `Struct`, ...).
 - Recursive message graphs (rejected — would need `unique_ptr`/indirection).
 - Extensions, unknown-field preservation, services.
-- Generated `operator==`, `operator<<`, `std::hash` (could be added).
+- Generated `operator==`, `std::hash` (could be added). Structured logging via
+  `to_ostream` is available behind `gen_formatters` (see above).

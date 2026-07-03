@@ -18,6 +18,9 @@ func Run(gen *protogen.Plugin, opts Options) error {
 	if opts.BytesType == "" {
 		opts.BytesType = "::std::string"
 	}
+	if opts.LogFormatInclude == "" {
+		opts.LogFormatInclude = "log_format.hpp"
+	}
 
 	// Recursion is unsupported; fail fast before emitting anything.
 	if err := checkAcyclic(gen.Files); err != nil {
@@ -47,6 +50,10 @@ func (g *fileGen) generate(gen *protogen.Plugin) {
 	g.genDtoHeader(gen, base)
 	g.genConvHeader(gen, base)
 	g.genConvSource(gen, base)
+	if g.opts.GenFormatters {
+		g.genFmtHeader(gen, base)
+		g.genFmtSource(gen, base)
+	}
 }
 
 // nsParts returns the C++ namespace components for the DTO namespace, e.g.

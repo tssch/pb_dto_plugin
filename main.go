@@ -25,8 +25,8 @@ import (
 	"os"
 	"strings"
 
-	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/compiler/protogen"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/pluginpb"
 
 	"github.com/tssch/pb_dto_plugin/internal/cppgen"
@@ -59,6 +59,10 @@ func run() error {
 		"leaf C++ namespace appended to the proto package for generated DTOs")
 	bytesType := flags.String("bytes_type", "::std::string",
 		"C++ type used for proto `bytes` fields")
+	genFormatters := flags.Bool("gen_formatters", false,
+		"also emit <base>.fmt.h/.cc implementing logfmt::to_ostream for the DTOs")
+	logFormatInclude := flags.String("log_format_include", "log_format.hpp",
+		"include path used for the logfmt header in generated formatter files")
 
 	gen, err := protogen.Options{ParamFunc: flags.Set}.New(&req)
 	if err != nil {
@@ -68,8 +72,10 @@ func run() error {
 	gen.SupportedFeatures = uint64(pluginpb.CodeGeneratorResponse_FEATURE_PROTO3_OPTIONAL)
 
 	if err := cppgen.Run(gen, cppgen.Options{
-		NamespaceSuffix: *nsSuffix,
-		BytesType:       *bytesType,
+		NamespaceSuffix:  *nsSuffix,
+		BytesType:        *bytesType,
+		GenFormatters:    *genFormatters,
+		LogFormatInclude: *logFormatInclude,
 	}); err != nil {
 		gen.Error(err)
 	}
