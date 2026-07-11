@@ -102,6 +102,9 @@ func (o Options) cppElemType(fd protoreflect.FieldDescriptor) string {
 	case protoreflect.EnumKind:
 		return o.dtoEnumFQN(fd.Enum())
 	case protoreflect.MessageKind, protoreflect.GroupKind:
+		if t, ok := wellKnownDTOType(fd.Message()); ok {
+			return t
+		}
 		return o.dtoFQN(fd.Message())
 	default:
 		return "/* unsupported kind */"

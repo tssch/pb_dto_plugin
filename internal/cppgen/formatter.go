@@ -34,13 +34,16 @@ func (g *fileGen) genFmtHeader(gen *protogen.Plugin, base string) {
 		}
 		out.P("#include \"", strings.TrimSuffix(p, ".proto"), ".fmt.h\"")
 	}
+	if g.usesWellKnown() {
+		out.P("#include \"", wellKnownFmtInclude, "\"")
+	}
 	out.P()
 
 	g.openNamespace(out)
 	for _, e := range g.fileEnums() {
 		out.P("void to_ostream(::logfmt::context& ctx, ", localName(e.Desc), " v);")
 	}
-	for _, m := range g.fileMessages() {
+	for _, m := range g.keptMessages() {
 		out.P("void to_ostream(::logfmt::context& ctx, const ", localName(m.Desc), "& v);")
 	}
 	g.closeNamespace(out)
@@ -60,7 +63,7 @@ func (g *fileGen) genFmtSource(gen *protogen.Plugin, base string) {
 	for _, e := range g.fileEnums() {
 		g.emitEnumFormatter(out, e)
 	}
-	for _, m := range g.fileMessages() {
+	for _, m := range g.keptMessages() {
 		g.emitMessageFormatter(out, m)
 	}
 	g.closeNamespace(out)

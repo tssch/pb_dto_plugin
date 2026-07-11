@@ -22,9 +22,16 @@ func Run(gen *protogen.Plugin, opts Options) error {
 		opts.LogFormatInclude = "log_format.hpp"
 	}
 
-	// Recursion is unsupported; fail fast before emitting anything.
-	if err := checkAcyclic(gen.Files); err != nil {
-		return err
+	// Messages that lie on (or depend on) an unbreakable cycle cannot be
+	// expressed as by-value DTOs. Rather than aborting the whole run, we drop
+	// just those messages and warn; everything else is still generated.
+	analysis := analyzeCycles(gen.Files)
+	warnDropped(analysis)
+
+	// Emit the shared passthrough headers for well-known types (e.g.
+	// google.protobuf.Any) once, if any generated message uses one.
+	if anyUsesWellKnown(gen.Files, analysis.dropped) {
+		emitWellKnownSupport(gen, opts)
 	}
 
 	for _, f := range gen.Files {
@@ -34,15 +41,16 @@ func Run(gen *protogen.Plugin, opts Options) error {
 		if f.Desc.Syntax() != protoreflect.Proto3 {
 			return fmt.Errorf("%s: only proto3 is supported", f.Desc.Path())
 		}
-		g := &fileGen{opts: opts, f: f}
+		g := &fileGen{opts: opts, f: f, dropped: analysis.dropped}
 		g.generate(gen)
 	}
 	return nil
 }
 
 type fileGen struct {
-	opts Options
-	f    *protogen.File
+	opts    Options
+	f       *protogen.File
+	dropped map[protoreflect.FullName]bool
 }
 
 func (g *fileGen) generate(gen *protogen.Plugin) {
@@ -86,9 +94,24 @@ func localName(d protoreflect.Descriptor) string {
 	return flatName(d.FullName(), d.ParentFile().Package())
 }
 
-// fileMessages returns all real messages in this file, flattened.
+// fileMessages returns all real messages in this file, flattened. This is the
+// unfiltered set; it still feeds fileEnums so that enums nested inside dropped
+// messages are emitted (enums are always representable and may be referenced by
+// kept messages).
 func (g *fileGen) fileMessages() []*protogen.Message {
 	return flattenMessages(g.f.Messages)
+}
+
+// keptMessages returns the messages of this file that survive cycle analysis,
+// i.e. those actually emitted as DTO structs and conversion functions.
+func (g *fileGen) keptMessages() []*protogen.Message {
+	var out []*protogen.Message
+	for _, m := range g.fileMessages() {
+		if !g.dropped[m.Desc.FullName()] {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func flattenMessages(list []*protogen.Message) []*protogen.Message {
@@ -137,6 +160,9 @@ func (g *fileGen) genDtoHeader(gen *protogen.Plugin, base string) {
 		}
 		out.P("#include \"", strings.TrimSuffix(p, ".proto"), ".dto.h\"")
 	}
+	if g.usesWellKnown() {
+		out.P("#include \"", wellKnownDTOInclude, "\"")
+	}
 	out.P()
 
 	g.openNamespace(out)
@@ -144,7 +170,16 @@ func (g *fileGen) genDtoHeader(gen *protogen.Plugin, base string) {
 	for _, e := range g.fileEnums() {
 		g.emitEnum(out, e)
 	}
-	for _, m := range g.topoSort(g.fileMessages()) {
+	kept := g.keptMessages()
+	// Forward-declare every struct so that same-file `repeated` (std::vector)
+	// cycles compile regardless of definition order.
+	for _, m := range kept {
+		out.P("struct ", localName(m.Desc), ";")
+	}
+	if len(kept) > 0 {
+		out.P()
+	}
+	for _, m := range g.topoSort(kept) {
 		g.emitStruct(out, m)
 	}
 
@@ -238,7 +273,11 @@ func (g *fileGen) topoSort(msgs []*protogen.Message) []*protogen.Message {
 }
 
 // sameFileMsgDeps returns the full names of messages defined in this file that
-// the given message references through its fields.
+// the given message embeds through a *hard* edge (singular message or map
+// value), i.e. that must be a complete type and therefore defined first.
+// `repeated` message fields are soft edges (std::vector tolerates an incomplete
+// type via the forward declarations emitted in genDtoHeader) and are skipped,
+// so they impose no ordering constraint.
 func (g *fileGen) sameFileMsgDeps(m *protogen.Message) []protoreflect.FullName {
 	path := g.f.Desc.Path()
 	var deps []protoreflect.FullName
@@ -255,6 +294,8 @@ func (g *fileGen) sameFileMsgDeps(m *protogen.Message) []protoreflect.FullName {
 			if mv := fd.MapValue(); isMessageField(mv) {
 				add(mv.Message())
 			}
+		case isMessageField(fd) && fd.IsList():
+			// soft edge: std::vector<T> only needs a forward declaration.
 		case isMessageField(fd):
 			add(fd.Message())
 		}
@@ -274,9 +315,22 @@ func (g *fileGen) genConvHeader(gen *protogen.Plugin, base string) {
 	out.P()
 	out.P("#include \"", base, ".dto.h\"")
 	out.P("#include \"", base, ".pb.h\"")
+	// Pull in the conversion declarations for imported message types this file
+	// references, so from_proto/to_proto calls on them resolve.
+	imps := g.f.Desc.Imports()
+	for i := 0; i < imps.Len(); i++ {
+		p := imps.Get(i).Path()
+		if strings.HasPrefix(p, "google/protobuf/") {
+			continue // well-known types handled separately
+		}
+		out.P("#include \"", strings.TrimSuffix(p, ".proto"), ".conv.h\"")
+	}
+	if g.usesWellKnown() {
+		out.P("#include \"", wellKnownConvInclude, "\"")
+	}
 	out.P()
 	g.openNamespace(out)
-	for _, m := range g.fileMessages() {
+	for _, m := range g.keptMessages() {
 		dto := localName(m.Desc)
 		proto := protoFQN(m.Desc)
 		out.P("void from_proto(const ", proto, "& src, ", dto, "& dst);")
@@ -298,7 +352,7 @@ func (g *fileGen) genConvSource(gen *protogen.Plugin, base string) {
 	out.P("#include <utility>")
 	out.P()
 	g.openNamespace(out)
-	for _, m := range g.fileMessages() {
+	for _, m := range g.keptMessages() {
 		g.emitFromProto(out, m)
 		g.emitToProto(out, m)
 	}
@@ -326,6 +380,14 @@ func (g *fileGen) emitToProto(out *protogen.GeneratedFile, m *protogen.Message) 
 	out.P()
 }
 
+// accessorName returns the stem of a field's protobuf C++ accessors
+// (getter `x()`, `set_x()`, `has_x()`). protoc lowercases the field name and
+// appends '_' to names that collide with a C++ keyword (e.g. field `auto` ->
+// `auto_()`), so we mirror that here to match the generated protobuf API.
+func accessorName(fd protoreflect.FieldDescriptor) string {
+	return sanitize(strings.ToLower(string(fd.Name())))
+}
+
 // fromScalar wraps a protobuf-side scalar/enum expression so it yields the DTO type.
 func (g *fileGen) fromScalar(fd protoreflect.FieldDescriptor, expr string) string {
 	if fd.Kind() == protoreflect.EnumKind {
@@ -344,7 +406,7 @@ func (g *fileGen) toScalar(fd protoreflect.FieldDescriptor, expr string) string 
 
 func (g *fileGen) fieldFromProto(out *protogen.GeneratedFile, fld *protogen.Field) {
 	fd := fld.Desc
-	acc := strings.ToLower(string(fd.Name()))
+	acc := accessorName(fd)
 	mem := "dst." + sanitize(string(fd.Name()))
 
 	switch {
@@ -397,7 +459,7 @@ func (g *fileGen) fieldFromProto(out *protogen.GeneratedFile, fld *protogen.Fiel
 
 func (g *fileGen) fieldToProto(out *protogen.GeneratedFile, fld *protogen.Field) {
 	fd := fld.Desc
-	acc := strings.ToLower(string(fd.Name()))
+	acc := accessorName(fd)
 	mem := "src." + sanitize(string(fd.Name()))
 
 	switch {
@@ -442,7 +504,7 @@ func (g *fileGen) oneofFromProto(out *protogen.GeneratedFile, m *protogen.Messag
 	out.P("  switch (src.", strings.ToLower(oname), "_case()) {")
 	for idx, fld := range o.Fields {
 		n := idx + 1 // variant index 0 is std::monostate
-		acc := strings.ToLower(string(fld.Desc.Name()))
+		acc := accessorName(fld.Desc)
 		label := proto + "::k" + upperCamel(string(fld.Desc.Name()))
 		if isMessageField(fld.Desc) {
 			out.P("    case ", label, ": {")
@@ -468,7 +530,7 @@ func (g *fileGen) oneofToProto(out *protogen.GeneratedFile, o *protogen.Oneof) {
 	out.P("  switch (", mem, ".index()) {")
 	for idx, fld := range o.Fields {
 		n := strconv.Itoa(idx + 1)
-		acc := strings.ToLower(string(fld.Desc.Name()))
+		acc := accessorName(fld.Desc)
 		get := "::std::get<" + n + ">(" + mem + ")"
 		out.P("    case ", idx+1, ":")
 		if isMessageField(fld.Desc) {

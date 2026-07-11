@@ -11,9 +11,17 @@ conversion layer is generated separately and is the only part that touches
 
 ## Status
 
-Scaffold. Supports **proto3 only**. Well-known types are **not** supported yet.
-Recursive (self-referential) message graphs are rejected with a clear error,
-because the by-value DTO representation cannot express them.
+Scaffold. Supports **proto3 only**. Most well-known types are **not** supported
+yet; the exception is `google.protobuf.Any`, mapped to a passthrough DTO (see
+below).
+
+Cyclic message graphs are handled gracefully: messages on an *unbreakable*
+cycle — and any message that transitively depends on one — are skipped (with a
+warning to stderr), while every other message is still generated. A cycle is
+breakable when it passes through a same-file `repeated` message field, since
+`std::vector` may hold an incomplete type (C++17) and the struct is
+forward-declared; cycles running only through singular (`std::optional`), `map`,
+or `oneof` (`std::variant`) fields require complete types and are dropped.
 
 ## Type mapping
 
@@ -114,8 +122,17 @@ with `-Iinclude`, or override the include path via `log_format_include`); the
 ## Not yet handled (intentional)
 
 - proto2 syntax (rejected with an error).
-- Well-known types (`Timestamp`, `Duration`, wrappers, `Any`, `Struct`, ...).
-- Recursive message graphs (rejected — would need `unique_ptr`/indirection).
+- Well-known types (`Timestamp`, `Duration`, wrappers, `Struct`, ...), **except**
+  `google.protobuf.Any`: it maps to a passthrough struct
+  `::cppdto::wellknown::Any { std::string type_url; std::string value; }` emitted
+  in shared `cppdto/well_known.{dto,conv,fmt}.h` support headers. The payload is
+  carried verbatim (serialized bytes + type URL); it is not unpacked.
+- Unbreakable recursive message graphs (skipped with a warning — would need
+  `unique_ptr`/indirection to represent). See **Status** above; breakable
+  (`repeated`) recursion is supported.
+- Cross-file cycles (always treated as unbreakable/skipped, since the
+  `#include` model cannot supply an incomplete type across a mutual-include
+  boundary).
 - Extensions, unknown-field preservation, services.
 - Generated `operator==`, `std::hash` (could be added). Structured logging via
   `to_ostream` is available behind `gen_formatters` (see above).

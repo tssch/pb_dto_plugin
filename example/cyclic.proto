@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package example.cyclic;
+
+// Tree recursion through a repeated field: representable as
+// `struct Node { std::vector<Node> children; };` with a forward declaration.
+// Must be KEPT.
+message Node {
+  string name = 1;
+  repeated Node children = 2;
+}
+
+// Mutual recursion through singular (optional<T>) message fields: unbreakable.
+// A and B must be DROPPED.
+message A {
+  B b = 1;
+}
+message B {
+  A a = 1;
+}
+
+// Depends on a dropped message (A): must be DROPPED too.
+message C {
+  A a = 1;
+  int32 n = 2;
+}
+
+// Mutual recursion where at least one edge is a repeated field: breakable, so
+// both must be KEPT (Leaf uses vector<Branch>, Branch uses optional<Leaf>).
+message Branch {
+  Leaf leaf = 1;
+}
+message Leaf {
+  repeated Branch branches = 1;
+}
+
+// Wholly acyclic: must be KEPT.
+message Ok {
+  int32 x = 1;
+  Node node = 2;
+}
